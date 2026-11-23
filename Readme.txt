@@ -28,8 +28,8 @@ budworm, for the years 2014 to 2019:
   Create_point_coverage_for_Hysplit_runs.R   Step 1: 5-km start points from the
                                              defoliation polygons (R)
   Hysplit_start_points_batch_script.sh       Step 1: SLURM job running the R script
-  Extract_NAMS_batch_script.sh               Step 2: SLURM array extracting the NAM
-                                             met files from tape to scratch
+  Extract_NAMS.sh                            Step 2: extracts the NAM met files from
+                                             tape to scratch (run on a login node)
   Make_hysplit_CONTROL_files.sh              Step 3: writes the HYSPLIT CONTROL files
                                              (called by the array tasks; can also be
                                              run on its own)
@@ -98,7 +98,7 @@ budworm, for the years 2014 to 2019:
 
   SBW polygons (shp)                     NAM tar files (nearline, tape)
         |                                          |
-  [1] Create_point_coverage_for_Hysplit_runs.R   [2] Extract_NAMS_batch_script.sh
+  [1] Create_point_coverage_for_Hysplit_runs.R   [2] Extract_NAMS.sh (login node)
         |  1-km rasterization,                     |  extract June 21 - Aug 23
         |  5-km start points + weights             |
         v                                          v
@@ -141,14 +141,22 @@ Step 1 - Start points (one job, all years)
   overwrites the files of a previous run (rename the folder first to keep them).
   Check summary.csv for the number of points and the defoliated area per year.
 
-Step 2 - Meteorology (array of 6 tasks, one per year 2014-2019)
+Step 2 - Meteorology (on a LOGIN node, one or more years)
 
-  sbatch Extract_NAMS_batch_script.sh
+  nohup bash Extract_NAMS.sh 2014 > ${SCRATCH}/NAMS/extract_2014.log 2>&1 &
 
-  Each task extracts June 21 to August 23 (64 daily files, about 80 GB) from
-  <YEAR>.tar to ${SCRATCH}/NAMS/<YEAR>/ and checks that no file is missing
-  (the task fails and lists the MISSING files otherwise). The tape recall can
-  take a while; the wall time is 12 h.
+  Nearline is NOT mounted on the compute nodes, so this cannot be a SLURM job
+  (the first attempt, job 5462234, failed with "tar file does not exist").
+  nohup keeps it running after you log out; note the login node (hostname) to
+  find the process again with ps. Several years: Extract_NAMS.sh 2015 2016 ...
+
+  For each year, extracts June 21 to August 23 (64 daily files, about 80 GB)
+  from <YEAR>.tar to ${SCRATCH}/NAMS/<YEAR>/ and checks that no file is
+  missing (the log lists the MISSING files and the script exits with an error
+  otherwise). The last line of the log is
+  "<YEAR>: <n> files in ..., <m> missing, finished <date>".
+  The tar file must first be recalled from tape, which can take a while
+  (check with: lfs hsm_state <tar file>; "released" = still on tape only).
 
 Step 3 - HYSPLIT runs (one array per year, or per year and height)
 
@@ -346,8 +354,10 @@ Make_hysplit_CONTROL_files.sh on its own (e.g. to inspect CONTROL files):
      tests in ${SCRATCH}/Test_hrdps, and checked that hyts_std accepts its
      CONTROL files (2023 NAM data: half-hour start times, the 2 met files are
      chained, 15-h runs).
-  8. Located the 2014-2019 NAM data on nearline and wrote
-     Extract_NAMS_batch_script.sh.
+  8. Located the 2014-2019 NAM data on nearline and wrote the extraction
+     script (first as a SLURM array; it failed because nearline is not
+     mounted on the compute nodes, so it became Extract_NAMS.sh, run on a
+     login node).
   9. Wrote 0_Start_hysplit_array.sh, which writes the array batch script.
  10. Ran step 1 at 1 km (job 5446218, 28.5 min, 5.3 GB): 43,620 to 99,556 start
      points per year, 436,957 in total, i.e. 1.79 billion trajectories.
@@ -359,6 +369,8 @@ Make_hysplit_CONTROL_files.sh on its own (e.g. to inspect CONTROL files):
      locally with 2023 NAM data and fake points (44 runs in 72 s, one tar.gz
      per day, task skipped when rerun).
 
-  Not run yet: step 1 at 5 km (rerun needed), step 2 (NAM extraction),
-  step 3 (HYSPLIT). The wall time of step 3 is estimated from the test runs;
+ 13. Submitted step 1 at 5 km (job 5460527) and started the 2014 NAM
+     extraction on login1 (log: ${SCRATCH}/NAMS/extract_2014.log).
+
+  Not run yet: step 2 for 2015-2019, step 3 (HYSPLIT). The wall time of step 3 is estimated from the test runs;
   check the first tasks (sacct, logs) before letting a whole year run.
