@@ -27,7 +27,9 @@
 #   skip most row groups.
 #
 # Trajectory -> start point: tdump trajectory i of batch b<NNNN> is line
-#   (NNNN - 1) x POINTS_PER_RUN + i of the height file. This is checked against
+#   (NNNN - 1) x POINTS_PER_RUN + i of the height file, i.e. of the points with
+#   in_nam_domain = TRUE in the CSV (points off the NAM grid are excluded by
+#   Flag_NAM_domain.R). This is checked against
 #   the start coordinates written in the tdump header; if HYSPLIT dropped points
 #   (off the met grid, trajectories renumbered) or the check fails, each
 #   trajectory is matched to the nearest start point instead.
@@ -79,6 +81,9 @@ message(sprintf("%s %s: %d tdump files", YEAR, DATE, length(files)))
 # ---- Start points ------------------------------------------------------------
 pts <- fread(POINTS_CSV)
 pts <- unique(pts, by = "point_id")              # the CSV has one row per height
+if ("in_nam_domain" %in% names(pts)) {            # points off the NAM grid are not
+  pts <- pts[in_nam_domain == TRUE]               # in the start files (Flag_NAM_domain.R)
+}
 setorder(pts, point_id)                           # = line order of the height files
 pts[, row := .I]
 attr_cols <- c("weight_km2", "km2_light", "km2_moderate", "km2_mod_to_severe",

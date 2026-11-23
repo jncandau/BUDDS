@@ -100,6 +100,14 @@ if [[ ! -f ${POINTS_CSV} ]]; then
    exit 1
 fi
 
+# Start points off the NAM grid make HYSPLIT runs fail: they must have been
+# removed from the start files by Flag_NAM_domain.R
+if ! head -1 ${POINTS_CSV} | grep -q "in_nam_domain"; then
+   echo "The start points of ${YEAR} have not been checked against the NAM grid:"
+   echo "run  Rscript ${WORK_DIR}/Flag_NAM_domain.R ${YEAR}  first"
+   exit 1
+fi
+
 # Heights of this array (zero-padded, e.g. "0100 0200"), to check the GeoParquet output
 HEIGHTS=$(for f in ${HFILES}; do basename $f .txt | sed -E 's/.*_([0-9]{4})m$/\1/'; done | tr '\n' ' ')
 

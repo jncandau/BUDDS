@@ -28,6 +28,8 @@ budworm, for the years 2014 to 2019:
   Create_point_coverage_for_Hysplit_runs.R   Step 1: 5-km start points from the
                                              defoliation polygons (R)
   Hysplit_start_points_batch_script.sh       Step 1: SLURM job running the R script
+  Flag_NAM_domain.R                          Step 2b: excludes the start points outside
+                                             the usable NAM grid (after step 2)
   Extract_NAMS.sh                            Step 2: extracts the NAM met files from
                                              tape to scratch (run on a login node)
   Make_hysplit_CONTROL_files.sh              Step 3: writes the HYSPLIT CONTROL files
@@ -165,6 +167,29 @@ Step 2 - Meteorology (on a LOGIN node, one or more years)
   "<YEAR>: <n> files in ..., <m> missing, finished <date>".
   The tar file must first be recalled from tape, which can take a while
   (check with: lfs hsm_state <tar file>; "released" = still on tape only).
+
+Step 2b - Exclude the start points outside the NAM grid (login node, seconds)
+
+  Rscript Flag_NAM_domain.R            # all years 2014-2019 (or: ... 2014 2015)
+
+  HYSPLIT accepts a start point only if its grid cell satisfies
+  2 <= INT(x) < NX-2 and 2 <= INT(y) < NY-2 (library/hysplit/metpos.f);
+  otherwise the WHOLE run stops with "start point not within (x,y,t) any data
+  file" (first 2014 test, job 5478026: all 66 runs of batch b0001 failed).
+  The script reads the grid from the NAM file header (Lambert conformal,
+  461 x 401 points, 12 km), computes the grid position of each point (same
+  conversion as HYSPLIT, checked to 1e-4 cell), excludes the points outside
+  the usable grid (margin 0.05 cell), and checks with a 1-hour HYSPLIT run
+  that all the remaining points are accepted. It adds in_nam_domain to
+  hysplit_points_<YEAR>.csv, rewrites the start files with the in-grid points
+  only (point_id unchanged), and writes points_off_NAM_grid_<YEAR>.csv and
+  nam_domain_summary.csv. It can be rerun. 0_Start_hysplit_array.sh refuses
+  to run before it.
+
+    Year  Points off grid   Area excluded      Where
+    2014  148 of 3,376      558 km2 (1.28%)    Yukon, northern BC, NWT (> 61.9 N)
+    2015  290 of 5,006    1,556 km2 (2.35%)    Yukon, northern BC, NWT (> 62.9 N)
+    2016-2019       0              0
 
 Step 3 - HYSPLIT runs (one array per year, or per year and height)
 
@@ -398,10 +423,12 @@ Make_hysplit_CONTROL_files.sh on its own (e.g. to inspect CONTROL files):
     This is why CONTROL and tdump files are created on node-local disk and packed
     into one tar.gz per task (62 files per year).
   - SLURM on Fir: MaxArraySize = 10000.
-  - HYSPLIT silently drops starting points that are off the met grid; the
-    trajectory numbers in the tdump file are then shifted. These runs are
-    listed in the run log ("sources reduced"). Trajectories that leave the
-    grid during the run stop and give "off spatial domain" warnings (normal).
+  - Start points outside the usable NAM grid make the whole HYSPLIT run fail;
+    they are excluded by Flag_NAM_domain.R (step 2b). If HYSPLIT ever reports
+    "sources reduced", the run is listed in the run log and the converter
+    matches the trajectories to their start points by coordinates.
+    Trajectories that leave the grid during the run stop and give
+    "off spatial domain" warnings (normal; complete = FALSE in GeoParquet).
   - Scratch files are purged when not used for a while: copy the results you
     keep to /project or nearline.
 
@@ -466,5 +493,17 @@ Make_hysplit_CONTROL_files.sh on its own (e.g. to inspect CONTROL files):
  15. Installed DuckDB 2.0.1 and its spatial extension, created ~/.duckdbrc,
      and wrote Example_queries.sql (section 6.5), tested on the 2023 test day.
 
-  Not run yet: step 2 for 2015-2019, step 3 (HYSPLIT). The wall time of step 3 is estimated from the test runs;
-  check the first tasks (sacct, logs) before letting a whole year run.
+ 16. Step 1 at 5 km completed (job 5460527, 30.5 min, 5.0 GB): 3,376 to 6,686
+     points per year, 31,182 in total. NAM extraction completed for 2014-2019
+     (64 files per year, 0 missing).
+ 17. First HYSPLIT test (2014, task 1 = June 21, job 5478026): 198 of 264 runs
+     completed; the 66 runs of batch b0001 failed because of start points
+     outside the usable NAM grid. HYSPLIT itself used only about 25 MB per run
+     (the 4 GB MaxRSS of the job is the page cache of the copied met files).
+     Wrote Flag_NAM_domain.R (step 2b) using HYSPLIT's exact start-point rule;
+     148 (2014) and 290 (2015) points excluded; the failing runs now complete.
+     The converter skips the excluded points (in_nam_domain = FALSE).
+
+  Not run yet: step 3 (HYSPLIT) after the fix. The wall time of step 3 is
+  estimated from the test runs; check the first tasks (sacct, logs) before
+  letting a whole year run.
