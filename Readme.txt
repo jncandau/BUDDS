@@ -39,6 +39,8 @@ budworm, for the years 2014 to 2019:
   Convert_tdump_to_GeoParquet.R              Step 3: converts the tdump files of one day
                                              to GeoParquet (called by the array tasks;
                                              can also be run on its own)
+  Example_queries.sql                        DuckDB example queries on the GeoParquet
+                                             trajectories (section 6.5)
   Readme.txt                                 This file
 
 
@@ -321,6 +323,43 @@ Make_hysplit_CONTROL_files.sh on its own (e.g. to inspect CONTROL files):
         ${SCRATCH}/output/hysplit_start_points/hysplit_points_2014.csv \
         ${SCRATCH}/hysplit_parquet
 
+6.5 Querying the GeoParquet files with DuckDB
+
+  DuckDB 2.0.1 (command-line program) is installed in ~/software/duckdb-2.0.1
+  (official Linux build from GitHub, checksum verified), linked as ~/bin/duckdb.
+  The spatial extension is in ~/.duckdb/extensions/v2.0.1/ (shared home, so it
+  also loads on compute nodes, which have no internet access).
+  ~/.duckdbrc runs at the start of every session:
+      LOAD spatial;
+      SET geometry_always_xy = true;
+
+  Example_queries.sql defines two views on ${SCRATCH}/hysplit_parquet,
+  "traj" (one row per trajectory) and "pos" (one row per trajectory and hour),
+  and gives examples of: counts per partition, time filters, trajectories
+  crossing a polygon weighted by weight_km2, positions within a polygon,
+  weighted density grid of end points, join of the two views, distance on the
+  ellipsoid, and export to GeoPackage for QGIS or R/sf.
+
+    duckdb < Example_queries.sql                  # run all the examples
+    duckdb                                        # interactive, then:
+      .read Example_queries.sql
+      SELECT ... FROM traj WHERE ...;
+
+  Notes:
+  - SET geometry_always_xy = true is required in DuckDB 2.0 for spheroid
+    measures (ST_Length_Spheroid, ST_Distance_Spheroid) and GDAL exports, which
+    otherwise stop with an error; it tells DuckDB that coordinates are
+    (longitude, latitude). It becomes the default in DuckDB 2.1.
+  - year, date and height come from the folder names; the views read them as
+    INTEGER, VARCHAR ('YYYYMMDD', local EDT date) and INTEGER (m AGL) with
+    hive_types (without it, height is read as the text '0100').
+  - ST_Intersects/ST_Within work on lon/lat as planar coordinates (polygon
+    edges are straight lines in lon/lat), like sf with s2 turned off.
+  - Tested on the 2023 test day: DuckDB reads the geometry as
+    GEOMETRY('OGC:CRS84'); the polygon intersection gives the same counts and
+    weighted sums as R/sf; the GeoPackage export is read by GDAL with the
+    correct lon/lat order; all the examples run in under 1 s.
+
 
 7. SIZES, LIMITS AND CAVEATS
 ----------------------------
@@ -424,6 +463,8 @@ Make_hysplit_CONTROL_files.sh on its own (e.g. to inspect CONTROL files):
      and times checked, fallback matching by coordinates checked; resubmission
      reruns only what is missing.
 
-  Not run yet: step 2 for 2015-2019, step 3 (HYSPLIT). DuckDB is not installed
-  yet (needed to query the GeoParquet files, not to write them). The wall time of step 3 is estimated from the test runs;
+ 15. Installed DuckDB 2.0.1 and its spatial extension, created ~/.duckdbrc,
+     and wrote Example_queries.sql (section 6.5), tested on the 2023 test day.
+
+  Not run yet: step 2 for 2015-2019, step 3 (HYSPLIT). The wall time of step 3 is estimated from the test runs;
   check the first tasks (sacct, logs) before letting a whole year run.
