@@ -13,8 +13,10 @@
 #   3. runs hyts_std on each CONTROL file
 #   4. packs all tdump files and a run log into ONE tar.gz in
 #      ${SCRATCH}/hysplit_tdump/<YEAR>/ (keeps the number of files on /scratch low)
-# A task whose tar.gz already exists does nothing, so a failed array can simply be
-# resubmitted.
+#   5. converts the tdump files to GeoParquet with Convert_tdump_to_GeoParquet.R
+#      (${SCRATCH}/hysplit_parquet/{positions,trajectories}/year=/date=/height=/)
+# Resubmitting a failed array is safe: steps 1-4 are skipped when the day's tar.gz
+# exists, and step 5 when the day's GeoParquet files exist (one per height).
 #
 # Usage: ./0_Start_hysplit_array.sh YEAR [HEIGHT]
 # Then:  sbatch Hysplit_batch_script_<YEAR>[_<HEIGHT>m].sh
@@ -49,12 +51,16 @@ TIMES_PER_DAY=11             # start times per day = per array task
 # Set working directory (where the scripts are)
 WORK_DIR="/home/jcandau/projects/def-cbataill/jcandau/BUDDS"
 GENERATOR=${WORK_DIR}/Make_hysplit_CONTROL_files.sh
+CONVERTER=${WORK_DIR}/Convert_tdump_to_GeoParquet.R
 HYTS=/home/jcandau/software/hysplit.v5.4.2.source/exec/hyts_std
 BDYFILES=/home/jcandau/software/hysplit.v5.4.2.source/bdyfiles
+RSCRIPT=/home/jcandau/software/R-4.5.2/bin/Rscript   # has arrow, data.table, sf
 
 POINTS_DIR=${SCRATCH}/output/hysplit_start_points
+POINTS_CSV=${POINTS_DIR}/hysplit_points_${YEAR}.csv
 MET_DIR=${SCRATCH}/NAMS/${YEAR}
 OUTPUT_DIR=${SCRATCH}/hysplit_tdump/${YEAR}
+PARQUET_ROOT=${SCRATCH}/hysplit_parquet
 LOG_DIR=${SCRATCH}/hysplit_logs/${YEAR}
 
 # Number of days = array tasks (must match START_MMDD, END_MMDD and START_TIMES_EDT
@@ -65,7 +71,7 @@ NDAYS=$(( ( $(date -u -d "${YEAR}-08-21" +%s) - $(date -u -d "${YEAR}-06-21" +%s
 ## Checks
 ###############################
 
-for f in ${GENERATOR} ${HYTS}; do
+for f in ${GENERATOR} ${CONVERTER} ${HYTS} ${RSCRIPT}; do
   if [[ ! -f $f ]]; then
      echo "The file $f does not exist"
      exit 1
@@ -86,8 +92,16 @@ fi
 NMET=$(ls ${MET_DIR}/*_hysplit.t00z.namsa 2>/dev/null | wc -l)
 if [[ ${NMET} -lt $(( NDAYS + 2 )) ]]; then
    echo "Warning: only ${NMET} NAM files in ${MET_DIR} ($(( NDAYS + 2 )) needed)"
-   echo "         Run Extract_NAMS_batch_script.sh first"
+   echo "         Run Extract_NAMS.sh (on a login node) first"
 fi
+
+if [[ ! -f ${POINTS_CSV} ]]; then
+   echo "${POINTS_CSV} does not exist (needed for the GeoParquet conversion)"
+   exit 1
+fi
+
+# Heights of this array (zero-padded, e.g. "0100 0200"), to check the GeoParquet output
+HEIGHTS=$(for f in ${HFILES}; do basename $f .txt | sed -E 's/.*_([0-9]{4})m$/\1/'; done | tr '\n' ' ')
 
 # Runs per task = start times per day x sum over heights of the number of batches
 RUNS_PER_TIME=0
@@ -98,12 +112,12 @@ for f in ${HFILES}; do
 done
 RUNS_PER_TASK=$(( RUNS_PER_TIME * TIMES_PER_DAY ))
 
-# Wall time per task: runs x SEC_PER_RUN + 15 min for setup and packing
+# Wall time per task: runs x SEC_PER_RUN + 15 min for setup, packing and conversion
 SECS=$(( RUNS_PER_TASK * SEC_PER_RUN + 900 ))
 MINS=$(( (SECS + 59) / 60 ))
 WALLTIME=$(printf "%02d:%02d:00" $(( MINS / 60 )) $(( MINS % 60 )))
 
-mkdir -p ${OUTPUT_DIR} ${LOG_DIR}
+mkdir -p ${OUTPUT_DIR} ${PARQUET_ROOT} ${LOG_DIR}
 
 ###############################
 ## Write the batch script
@@ -130,8 +144,26 @@ echo "Running task ID \${SLURM_ARRAY_TASK_ID} on \$(hostname), started \$(date)"
 # Local date of this task (task 1 = June 21) and output file
 DAY=\$(date -u -d "${YEAR}-06-21 + \$((SLURM_ARRAY_TASK_ID - 1)) days" +%Y%m%d)
 OUT=${OUTPUT_DIR}/tdump_${YEAR}_\${DAY}${HSUFFIX}.tar.gz
+
+# GeoParquet conversion (step 5), skipped if all files of the day already exist
+convert() {
+   local missing=0
+   for h in ${HEIGHTS}; do
+      for d in positions trajectories; do
+         [[ -s ${PARQUET_ROOT}/\${d}/year=${YEAR}/date=\${DAY}/height=\${h}/part-0.parquet ]] || missing=1
+      done
+   done
+   if [ \${missing} -eq 0 ]; then
+      echo "GeoParquet files of \${DAY} already exist"
+      return 0
+   fi
+   ${RSCRIPT} ${CONVERTER} \${OUT} ${POINTS_CSV} ${PARQUET_ROOT} ${POINTS_PER_RUN}
+}
+
 if [[ -s \${OUT} ]]; then
-   echo "\${OUT} already exists, nothing to do"
+   echo "\${OUT} already exists, HYSPLIT runs skipped"
+   convert || exit 1
+   echo "Finished \$(date)"
    exit 0
 fi
 
@@ -205,11 +237,16 @@ fi
 tar -czf \${SLURM_TMPDIR}/out.tar.gz -C \${TDUMP_ROOT}/${YEAR} . || exit 1
 cp \${SLURM_TMPDIR}/out.tar.gz \${OUT}.part && mv \${OUT}.part \${OUT}
 
-echo "Wrote \${OUT}, finished \$(date)"
+echo "Wrote \${OUT}"
 
 if [ \${NFAIL} -gt 0 ]; then
    exit 1
 fi
+
+# 5. Convert the tdump files to GeoParquet
+convert || exit 1
+
+echo "Finished \$(date)"
 
 exit
 EOF
@@ -219,5 +256,6 @@ echo "Wrote ${BATCH}"
 echo "  ${NDAYS} array tasks (days), ${RUNS_PER_TASK} HYSPLIT runs per task"
 echo "  wall time per task: ${WALLTIME}"
 echo "  output: ${OUTPUT_DIR}/tdump_${YEAR}_<YYYYMMDD>${HSUFFIX}.tar.gz"
+echo "          ${PARQUET_ROOT}/{positions,trajectories}/year=${YEAR}/date=<YYYYMMDD>/height=<H>/"
 echo "  logs  : ${LOG_DIR}/"
 echo "Check it, then submit with: sbatch ${BATCH}"
