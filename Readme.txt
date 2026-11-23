@@ -4,6 +4,33 @@ BUDDS - HYSPLIT simulations of spruce budworm (SBW) moth dispersal from defoliat
 Last updated: 2026-11-23
 
 
+CURRENT STATUS / NEXT STEPS (2026-11-23)
+----------------------------------------
+
+Done:
+  - All HYSPLIT runs 2014-2019 completed (62 days x 11 start times x 6 heights
+    per year, 0 failed runs; jobs 5502296 and 5502302-5502308, plus the test
+    day 2014-06-21, job 5480358).
+  - Outputs (372 tar.gz days, 2232 GeoParquet files per layer) are in
+    ${SCRATCH}/hysplit_tdump, ${SCRATCH}/hysplit_parquet, logs in
+    ${SCRATCH}/hysplit_logs.
+  - Backup copy on /project (scratch is purged after ~60 days without use):
+    /project/6075019/jcandau/BUDDS_outputs/{hysplit_parquet,hysplit_tdump,
+    hysplit_start_points,hysplit_logs}
+    If the scratch copy is gone, point the DuckDB queries (parquet_root) to
+    /project/6075019/jcandau/BUDDS_outputs/hysplit_parquet.
+
+Next steps:
+  - Map_Quebec_trajectories.R (map of the trajectories starting in Quebec,
+    one panel per height) is a draft, not committed: check the last figure
+    ${SCRATCH}/hysplit_figures/quebec_trajectories_20140621.png and a dropped
+    province label.
+  - Analyses of the trajectories (landing areas, distances, weighting by
+    defoliated area) with DuckDB (section 6.5).
+  - The NAM met files in ${SCRATCH}/NAMS (~470 GB) can be deleted when no more
+    runs are needed; Extract_NAMS.sh re-extracts them from nearline.
+
+
 1. PURPOSE
 ----------
 
@@ -44,6 +71,7 @@ budworm, for the years 2014 to 2019:
   Example_queries.sql                        DuckDB example queries on the GeoParquet
                                              trajectories (section 6.5)
   Readme.txt                                 This file
+  CLAUDE.md                                  Context for Claude Code sessions
 
 
 3. INPUT DATA
